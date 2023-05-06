@@ -6,17 +6,17 @@ import logging
 
 Points4 = list[list[float, float], list[float, float], list[float, float], list[float, float]]
 
-pdf_path = 'pdfs/8.pdf'
+pdf_path = 'pdfs/1.pdf'
 
 logging.basicConfig(filename='autoRLMU.log', filemode="w", level=logging.INFO,
                     format='%(asctime)s -  %(levelname)s -  %(message)s')
 
 dpi = 150  # change zoom_factor if change this!!!
 pdf_zoom_factor = 0.48
-crop_x_start = 2060  # depends from dpi
-crop_y_start = 130  # depends from dpi
-crop_x_bottom = 2400  # depends from dpi
-crop_y_bottom = 1300  # depends from dpi
+crop_x_start = 2060  # depends on dpi
+crop_y_start = 130  # depends on dpi
+crop_x_bottom = 2400  # depends on dpi
+crop_y_bottom = 1300  # depends on dpi
 
 
 def get_points_from_cropped(p1: tuple[float, float], p2: tuple[float, float], crop_x=crop_x_start, crop_y=crop_y_start):
@@ -49,6 +49,21 @@ def get_pdfed_rect(x0: float, y0: float, x1: float, y1: float, zoom_factor: floa
 
 
 tries_to_rotate: int = 4
+
+found_FCS_block: Points4 = list()
+found_node_rect: Points4 = list()
+found_node_number_rect: Points4 = list()
+found_node_number_rects: list[Points4] = list()
+node_number_text = ''
+new_node_number_text = '?'  # Fieldbus has 2 nodes, the code needs to be modified accordingly
+node_x0 = node_x2 = node_y2 = 0
+image_cropped = page_PIL_image = draw = None
+
+what_to_find = ('FCS07', 'FCSO7')
+replaced_with_full = what_to_replace = what_to_find  # it will be changed later anyway, to get rid of warnings
+replaced_with = 'FCS14'
+node_texts = ('NODE', 'NCDE', 'N0DE')
+
 pdf_path_annotated = pdf_path[:-4] + '_annotated' + pdf_path[-4:]
 print(f'working with {pdf_path[5:]}...')
 doc = fitz.open(pdf_path)
@@ -60,28 +75,16 @@ while tries_to_rotate > 0:
     page_PIL_image = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
     page_PIL_image.save('images/img_original.png', format='PNG')
 
-    image_cropped = page_PIL_image.crop((crop_x_start, crop_y_start, crop_x_bottom, crop_y_bottom))
+    image_cropped: Image = page_PIL_image.crop((crop_x_start, crop_y_start, crop_x_bottom, crop_y_bottom))
 
+    # noinspection PyTypeChecker
     image_cropped_na = np.asarray(image_cropped)
-
-    what_to_find = ('FCS07', 'FCSO7')
-    replaced_with_full = what_to_replace = what_to_find  # it will be changed later anyway, to get rid of warnings
-    replaced_with = 'FCS14'
-    node_texts = ('NODE', 'NCDE', 'N0DE')
 
     ocr = PaddleOCR(use_angle_cls=True, lang='en',
                     show_log=False)  # need to run only once to download and load model into memory
     result = ocr.ocr(image_cropped_na, cls=True)
 
     data = result[0]
-
-    found_FCS_block: Points4 = list()
-    found_node_rect: Points4 = list()
-    found_node_number_rect: Points4 = list()
-    found_node_number_rects: list[Points4] = list()
-    node_number_text = ''
-    new_node_number_text = '?'  # Fieldbus has 2 nodes, the code needs to be modified accordingly
-    node_x0 = node_x2 = node_y2 = 0
 
     logging.info(result)
 
@@ -164,7 +167,8 @@ for NN in found_node_number_rects:
     NN_new_y0: float = NN_top_left[1]
     NN_new_x1: float = NN_new_x0 + (NN_bottom_right[0] - NN_top_left[0]) + 10
     NN_new_y1: float = NN_new_y0 + (NN_bottom_right[1] - NN_top_left[1]) + 10
-    NN_new_text_rect: fitz.Rect = get_pdfed_rect(NN_new_x0, NN_new_y0, NN_new_x1, NN_new_y1, zoom_factor=pdf_zoom_factor)
+    NN_new_text_rect: fitz.Rect = get_pdfed_rect(NN_new_x0, NN_new_y0, NN_new_x1, NN_new_y1,
+                                                 zoom_factor=pdf_zoom_factor)
     node_number_text_rect: fitz.Rect = get_pdfed_rect(*NN_top_left, *NN_bottom_right, zoom_factor=pdf_zoom_factor)
 
     page.add_line_annot((node_number_text_rect[0], node_number_text_rect[1]),
@@ -176,7 +180,8 @@ for NN in found_node_number_rects:
 stamp_rect = (1400, 1000, 1800, 1200)
 stamp_rect = get_pdfed_rect(*stamp_rect, zoom_factor=pdf_zoom_factor)
 
-# insert_image(rect, filename=None, pixmap=None, stream=None, mask=None, rotate=0, alpha=-1, oc=0, xref=0, keep_proportion=True, overlay=True)
+# insert_image(rect, filename=None, pixmap=None, stream=None, mask=None,
+# rotate=0, alpha=-1, oc=0, xref=0, keep_proportion=True, overlay=True)
 page.insert_image(stamp_rect, filename='images/RLMU_Stamp.png', keep_proportion=True,
                   overlay=True, rotate=page.rotation)
 
