@@ -3,11 +3,12 @@ import fitz
 from PIL import Image, ImageDraw
 import numpy as np
 import logging
+import cv2
 
 Points4 = list[list[float, float], list[float, float], list[float, float], list[float, float]]
 
 # file name for pdf, the code needs to be changed to take links from the Excel file
-pdf_path = 'pdfs/1.pdf'
+pdf_path = 'pdfs/6.pdf'
 
 # logging is not working at the moment, it seems like another imported module changes the settings
 logging.basicConfig(filename='autoRLMU.log', filemode="w", level=logging.INFO,
@@ -59,7 +60,7 @@ found_node_number_rect: Points4 = list()
 found_node_number_rects: list[Points4] = list()
 new_node_number_text = '?'
 node_x0 = node_x2 = node_y2 = 0
-image_cropped = page_PIL_image = draw = None
+image_cropped = PIL_page_image = draw = open_cv_page_image = None
 what_to_find = ('FCS07', 'FCSO7')
 replaced_with_full = what_to_replace = what_to_find  # it will be changed later anyway, to get rid of warnings
 replaced_with = 'FCS14'
@@ -81,11 +82,12 @@ while tries_to_rotate > 0:
     pix = page.get_pixmap(dpi=dpi)
 
     # converting into pillow format and saving
-    page_PIL_image = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
-    page_PIL_image.save('images/img_original.png', format='PNG')
+    PIL_page_image = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
+    PIL_page_image.save('images/img_original.png', format='PNG')
+    open_cv_page_image = np.array(PIL_page_image)
 
     # cropping the right part of the image
-    image_cropped: Image = page_PIL_image.crop((crop_x_start, crop_y_start, crop_x_bottom, crop_y_bottom))
+    image_cropped: Image = PIL_page_image.crop((crop_x_start, crop_y_start, crop_x_bottom, crop_y_bottom))
 
     # converting the pillow image into nampy array
     # noinspection PyTypeChecker
@@ -173,10 +175,10 @@ draw.rectangle((FCS_top_left_cropped, FCS_bottom_right_cropped), outline='blue',
 image_cropped.save('images/img_cropped.png', format='PNG')
 
 # drawing on the page image and saving it for debug purposes
-draw = ImageDraw.Draw(page_PIL_image)
+draw = ImageDraw.Draw(PIL_page_image)
 draw.rectangle((FCS_top_left, FCS_bottom_right), outline='blue', width=2)
 logging.info(f'box_top_left={FCS_top_left}, box_bottom_right={FCS_bottom_right}')
-page_PIL_image.save('images/img_original_marked.png', format='PNG')
+PIL_page_image.save('images/img_original_marked.png', format='PNG')
 
 # calculating pdf coordinates for FCS annotations
 FCS_new_text_rect = get_pdfed_rect(FCS_new_x0, FCS_new_y0, FCS_new_x1, FCS_new_y1, zoom_factor=pdf_zoom_factor)
@@ -211,10 +213,32 @@ for NN in found_node_number_rects:
                             text_color=(255, 0, 0), border_color=None,
                             rotate=page.rotation, fontsize=8)
 
-# defining static coordinates for the stamp, the code needs to be changed to find an empty space
-# see findEmptySpace_test.py
-stamp_rect = (1400, 1000, 1800, 1200)
-stamp_rect = get_pdfed_rect(*stamp_rect, zoom_factor=pdf_zoom_factor)
+# defining static coordinates for the stamp is a bad idea, because the stamp may overlap with useful info
+# stamp_rect = (1400, 1000, 1800, 1200)
+# instead, we find an empty space for the stamp!
+grayed_page_image = cv2.cvtColor(open_cv_page_image, cv2.COLOR_BGR2GRAY)
+
+# create a grayscale image 200x400
+empty_template = np.zeros([200, 400, 1], dtype=np.uint8)
+# fill with 254 color (255 is white in grayscale), for some reason it is the prevailing color
+empty_template.fill(254)
+# getting width and height to calculate the rectangle later
+template_h, template_w = empty_template.shape[0:2]
+
+# finding an empty space
+match_method = cv2.TM_SQDIFF
+res = cv2.matchTemplate(grayed_page_image, empty_template, match_method)
+# cv2.normalize(res, res, 0, 1, cv2.NORM_MINMAX, -1) # it seems like it is not needed
+min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res, None)
+if match_method in (cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED):
+    location = min_loc
+else:
+    location = max_loc
+
+# calculating the stamp rectangle coordinates
+bottom_right = (location[0] + template_w, location[1] + template_h)
+stamp_rect = (location, bottom_right)
+stamp_rect = get_pdfed_rect(*stamp_rect[0], *stamp_rect[1], zoom_factor=pdf_zoom_factor)
 
 # adding the stamp
 page.insert_image(stamp_rect, filename='images/RLMU_Stamp.png', keep_proportion=True,
