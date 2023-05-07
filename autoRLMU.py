@@ -76,7 +76,7 @@ def make_redline(pdf_path_param: str, is_link: bool = False) -> bool:
             print(f'File cannot be open, aborting...')
             return False
         try:
-            doc = fitz.open(stream=response.content, filetype="pdf")
+            doc = fitz.Document(stream=response.content, filetype="pdf")
         except:
             print(f'File cannot be open, aborting...')
             return False
@@ -88,7 +88,7 @@ def make_redline(pdf_path_param: str, is_link: bool = False) -> bool:
         # open the pdf file
         print(f'Opening {pdf_path[5:]}...')
         try:
-            doc = fitz.open(pdf_path)
+            doc = fitz.Document(pdf_path)
         except:
             print(f'File cannot be open, aborting...')
             return False
