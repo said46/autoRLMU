@@ -45,7 +45,8 @@ def get_pdfed_rect(x0: float, y0: float, x1: float, y1: float, page: fitz.Page, 
     return get_rect_from_xywh(x, y, width, height, page)
 
 
-def RLMU_pdf(pdf_path_param: str, is_link: bool = False):
+# returns True if success, otherwise False
+def make_redline(pdf_path_param: str, is_link: bool = False) -> bool:
     # path or link to a pdf file
     if pdf_path_param in ('', None):
         raise ValueError('Path or link cannot be empty')
@@ -70,16 +71,27 @@ def RLMU_pdf(pdf_path_param: str, is_link: bool = False):
         # if pdf_path_param is a link
         print(f'Loading the file from URL...')
         response = requests.get(pdf_path)
-        print(f'res.status_code: {response.status_code}')
-        doc = fitz.open(stream=response.content, filetype="pdf")
+        print(f'response.status_code: {response.status_code}')
+        if response.status_code != requests.codes.ok:
+            print(f'File cannot be open, aborting...')
+            return False
+        try:
+            doc = fitz.open(stream=response.content, filetype="pdf")
+        except:
+            print(f'File cannot be open, aborting...')
+            return False
         # RECODE IN FUTURE!!!
         pdf_path_annotated = 'pdfs\link_annotated.pdf'
     else:
         # if pdf_path_param is a path, add '_annotated' to the file name
         pdf_path_annotated = pdf_path[:-4] + '_annotated' + pdf_path[-4:]
         # open the pdf file
-        print(f'Working with {pdf_path[5:]}...')
-        doc = fitz.open(pdf_path)
+        print(f'Opening {pdf_path[5:]}...')
+        try:
+            doc = fitz.open(pdf_path)
+        except:
+            print(f'File cannot be open, aborting...')
+            return False
 
     # load the only page
     page = doc.load_page(0)
@@ -260,4 +272,4 @@ def RLMU_pdf(pdf_path_param: str, is_link: bool = False):
     doc.close()
     print(f'******************************************************')
 
-    return
+    return True

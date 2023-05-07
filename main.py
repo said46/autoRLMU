@@ -3,10 +3,10 @@ import autoRLMU
 
 # link = 'https://sww-llsak.sakhalinenergy.ru/glasseic/livelink.exe?func=ll&objId=10162950&objAction=browse' \
 #        '&logStopConditionID=2931423_-2138710905_1_open'
-link = 'https://github.com/said46/autoRLMU/raw/main/pdfs/8.pdf'
+link = 'https://github.com/said46/autoRLMU/raw/main/pdfs/7.pdf'
 
-# autoRLMU.RLMU_pdf('pdfs/8.pdf')
-autoRLMU.RLMU_pdf(link, is_link=True)
+# autoRLMU.make_redline('pdfs/88.pdf')
+autoRLMU.make_redline(link, is_link=True)
 # ************** STOP HERE FOR NOW ********************
 quit()
 
