@@ -3,7 +3,7 @@ from PIL import Image
 import cv2
 import numpy as np
 
-pdf_path = 'pdfs/2.pdf'
+pdf_path = 'pdfs/111.pdf'
 
 doc = fitz.open(pdf_path)
 page = doc.load_page(0)

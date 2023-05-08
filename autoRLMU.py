@@ -22,11 +22,12 @@ class AnnotationMaker:
     _doc: fitz.Document
     _page: fitz.Page
 
-    def __init__(self):
+    def __init__(self, pdf_path_annotated='pdfs/DEFAULT_annotated.pdf'):
+        self._pdf_path_annotated: str = pdf_path_annotated
+        self._error_description = ''
         self._fcs_found_text_rect = None
         self._ocr_result_data = []
         self._pdf_path: str = ''
-        self._pdf_path_annotated: str = 'pdfs/default_annotated.pdf'
         self._is_link: bool = False
         self._tries_to_rotate: int = 4
         self._replaced_with = self._what_to_replace = ''
@@ -74,24 +75,33 @@ class AnnotationMaker:
         y = y0 * self.PDF_ZOOM_FACTOR
         return self._get_rect_from_xywh(x, y, width, height)
 
+    def _set_error(self, error_descr):
+        self._error_description = error_descr
+        print(f'{self._error_description}, aborting...')
+        return
+
+    def get_error_description(self):
+        return self._error_description
+
+    def _clear_error(self):
+        self._error_description = ''
+        return
+
     # opens the doc from file path or link, returns False if failed
     def _open_doc(self) -> bool:
         assert self._pdf_path != '' "pdf path cannot be empty"
         if self._is_link:
             # if pdf_path is a link
-            print(f'Loading the file from URL...')
+            print(f'Loading the file from {self._pdf_path}...')
             response = requests.get(self._pdf_path)
-            print(f'response.status_code: {response.status_code}')
             if response.status_code != requests.codes.ok:
-                print(f'File cannot be open, aborting...')
+                self._set_error(f'Bad response: {response.status_code}')
                 return False
             try:
                 self._doc = fitz.Document(stream=response.content, filetype="pdf")
-            except:
-                print(f'File cannot be open, aborting...')
+            except Exception as e:
+                self._set_error(f'{self._pdf_path} cannot be open: {str(e)}')
                 return False
-            # RECODE IN FUTURE!!!
-            self._pdf_path_annotated = 'pdfs/link_annotated.pdf'
         else:
             # if _pdf_path is a path, add '_annotated' to the file name
             self._pdf_path_annotated = self._pdf_path[:-4] + '_annotated' + self._pdf_path[-4:]
@@ -99,12 +109,13 @@ class AnnotationMaker:
             print(f'Opening {self._pdf_path[5:]}...')
             try:
                 self._doc = fitz.Document(self._pdf_path)
-            except:
-                print(f'File cannot be open, aborting...')
+            except Exception as e:
+                self._set_error(f'{self._pdf_path} cannot be open: {str(e)}')
                 return False
 
         # load the only page
         self._page = self._doc.load_page(0)
+        self._clear_error()
         return True
 
     def _get_pics_from_page(self):
@@ -156,7 +167,6 @@ class AnnotationMaker:
 
             # checking first five symbols for the desired text ('FCS07' in our case)
             if text[:5] in self.FCS_TEXT_TO_FIND:
-
                 # saving coordinates of the desired text ('FCS07' in our case)
                 fcs_rect = coordinates
                 print(f'{AnnotationMaker.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
@@ -181,7 +191,8 @@ class AnnotationMaker:
                 print(f'NODE was found in {node_text_rect}')
 
                 self._node_text_x0 = coordinates[0][0]
-                self._node_text_x2 = coordinates[2][0]
+                # sometimes nn text is a bit more on the right, that the NODE text, so +15
+                self._node_text_x2 = coordinates[2][0] + 15
                 self._node_text_y2 = coordinates[2][1]
                 # noinspection PyTypeChecker
                 self._nn_top_left_cropped: tuple[float, float] = (*node_text_rect[0],)
@@ -211,10 +222,12 @@ class AnnotationMaker:
             print(f'Rotating the page, {self._tries_to_rotate} tries left...')
             # if no tries left - quit the script
             if self._tries_to_rotate == 0:
+                self._set_error(f'No tries left, check the document rotation')
                 return False
 
         self._page_pillow_image_cropped.save('images/img_cropped.png', format='PNG')
 
+        self._clear_error()
         return True
 
     # adding FCS annotations into pdf
@@ -306,7 +319,8 @@ class AnnotationMaker:
     def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
         # path or link to a pdf file
         if pdf_path in ('', None):
-            raise ValueError('Path or link cannot be empty')
+            self._set_error(f'pdf path cannot be empty')
+            return False
         else:
             self._pdf_path = pdf_path
 
@@ -326,4 +340,5 @@ class AnnotationMaker:
 
         print(f'Saving the annotated pdf and closing the document...')
         self._doc.save(self._pdf_path_annotated)
+        self._clear_error()
         return True
