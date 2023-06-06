@@ -3,7 +3,9 @@ from paddleocr import PaddleOCR
 import fitz
 from PIL import Image, ImageDraw
 import numpy as np
-import cv2
+# import cv2
+# such import resolves "Cannot find reference 'xxx' in '__init__.py | __init__.py'" issue
+from cv2 import cv2
 import requests
 
 Points4 = list[list[float, float], list[float, float], list[float, float], list[float, float]]
