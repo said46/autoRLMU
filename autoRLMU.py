@@ -40,6 +40,7 @@ class AnnotationMaker:
         self._cropped_page_opencv_image: np.ndarray = None
         self._doc = None
         self._page = None
+        self._log: list[str] = []
         # need to run only once to download and load model into memory
         self._ocr: PaddleOCR.ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
 
@@ -77,7 +78,7 @@ class AnnotationMaker:
 
     def _set_error(self, error_descr):
         self._error_description = error_descr
-        print(f'{self._error_description}, aborting...')
+        self._append_msg_to_log(f'{self._error_description}, aborting...')
         return
 
     def get_error_description(self):
@@ -87,12 +88,19 @@ class AnnotationMaker:
         self._error_description = ''
         return
 
+    def get_log(self) -> str:
+        return '\r\n'.join(self._log)
+
+    def _append_msg_to_log(self, message: str) -> None:
+        print(message)
+        self._log.append(message)
+
     # opens the doc from file path or link, returns False if failed
     def _open_doc(self) -> bool:
         assert self._pdf_path != '' "pdf path cannot be empty"
         if self._is_link:
             # if pdf_path is a link
-            print(f'Loading the file from {self._pdf_path}...')
+            self._append_msg_to_log(f'Loading the file from {self._pdf_path}...')
             response = requests.get(self._pdf_path)
             if response.status_code != requests.codes.ok:
                 self._set_error(f'Bad response: {response.status_code}')
@@ -106,7 +114,7 @@ class AnnotationMaker:
             # if _pdf_path is a path, add '_annotated' to the file name
             self._pdf_path_annotated = self._pdf_path[:-4] + '_annotated' + self._pdf_path[-4:]
             # open the pdf file
-            print(f'Opening {self._pdf_path[5:]}...')
+            self._append_msg_to_log(f'Opening {self._pdf_path[5:]}...')
             try:
                 self._doc = fitz.Document(self._pdf_path)
             except Exception as e:
@@ -159,7 +167,10 @@ class AnnotationMaker:
         # checking every block of text
         for block in self._ocr_result_data:
             # draw a RED rectangle for ALL texts found
-            draw.rectangle((tuple(block[0][0]), tuple(block[0][2])), width=2, outline='red')
+            try:
+                draw.rectangle((tuple(block[0][0]), tuple(block[0][2])), width=2, outline='red')
+            except Exception as e:
+                self._append_msg_to_log(f'Exception while drawing a rectangle: {str(e)}')
             # saving coordinates for later
             coordinates: Points4 = block[0]
             # saving text for later
@@ -169,7 +180,7 @@ class AnnotationMaker:
             if text[:5] in self.FCS_TEXT_TO_FIND:
                 # saving coordinates of the desired text ('FCS07' in our case)
                 fcs_rect = coordinates
-                print(f'{AnnotationMaker.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
+                self._append_msg_to_log(f'{AnnotationMaker.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
 
                 # as we found the FCS text, there is no need to rotate the page and searching the text again
                 self._tries_to_rotate = 0
@@ -188,7 +199,7 @@ class AnnotationMaker:
             if text in AnnotationMaker.NODE_TEXTS:
                 # saving the 'NODE' text coordinates for later
                 node_text_rect = coordinates
-                print(f'NODE was found in {node_text_rect}')
+                self._append_msg_to_log(f'NODE was found in {node_text_rect}')
 
                 self._node_text_x0 = coordinates[0][0]
                 # sometimes nn text is a bit more on the right, that the NODE text, so +15
@@ -209,20 +220,20 @@ class AnnotationMaker:
                     self._node_number_rects.append(coordinates)
                     # forming the new node number text
                     self._new_node_number_text = str(int(text) + 1)
-                    print(f'NODE number {str(int(text))} was found in {coordinates}')
+                    self._append_msg_to_log(f'NODE number {str(int(text))} was found in {coordinates}')
 
         if not node_text_rect:
-            print(f'NODE was NOT found')
+            self._append_msg_to_log(f'NODE was NOT found')
 
         # if the FCS text was not found, rotate the page and decrement the number of tries left
         if not fcs_rect:
-            print(f'{AnnotationMaker.FCS_TEXT_TO_FIND} was NOT found')
+            self._append_msg_to_log(f'{AnnotationMaker.FCS_TEXT_TO_FIND} was NOT found')
             self._page.set_rotation(self._page.rotation + 90)
             self._tries_to_rotate -= 1
-            print(f'Rotating the page, {self._tries_to_rotate} tries left...')
+            self._append_msg_to_log(f'Rotating the page, {self._tries_to_rotate} tries left...')
             # if no tries left - quit the script
             if self._tries_to_rotate == 0:
-                self._set_error(f'No tries left, check the document rotation')
+                self._set_error(f'No tries left, check the document')
                 return False
 
         self._page_pillow_image_cropped.save('images/img_cropped.png', format='PNG')
@@ -329,16 +340,20 @@ class AnnotationMaker:
         if not self._open_doc():
             return False
 
+        ocr_success = False
         while self._tries_to_rotate > 0:
             self._get_pics_from_page()
             self._ocr_cropped_image()
-            self._analyze_ocred_data()
+            ocr_success = self._analyze_ocred_data()
+
+        if not ocr_success:
+            return False
 
         self._add_fcs_annotations()
         self._add_node_annotations()
         self._add_stamp()
 
-        print(f'Saving the annotated pdf and closing the document...')
+        self._append_msg_to_log(f'Saving the annotated pdf and closing the document...')
         self._doc.save(self._pdf_path_annotated)
         self._clear_error()
         return True
