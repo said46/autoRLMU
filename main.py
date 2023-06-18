@@ -8,7 +8,6 @@ wb = xl.load_workbook('loop_diagrams.xlsx')
 
 try:
     sheet = wb['check_sheet']
-    loops = []
 
     # for each row in 'check_sheet' sheet
     for row in range(2, sheet.max_row + 1):
@@ -26,8 +25,6 @@ try:
         # loop = {"Doc Number": sheet.cell(row, 1).value, "Link": sheet.cell(row, 2).hyperlink.target}
         loop = {"Doc Number": sheet.cell(row, 1).value, "Link": sheet.cell(row, 2).value}
 
-        loops.append(loop)
-
         # creating object
         pdf_path_annotated: str = f'pdfs/{loop["Doc Number"]}.pdf'
         loop_drawing = AnnotationMaker(pdf_path_annotated)
@@ -41,7 +38,8 @@ try:
 
         # filling the result in the Excel file
         sheet.cell(row, 3).value = loop["Result"]
-        sheet.cell(row, 4).value = loop_drawing.get_log()
+        if loop["Result"] != "Success":
+            sheet.cell(row, 4).value = loop_drawing.get_log()
 
         try:
             wb.save('loop_diagrams.xlsx')

@@ -1,41 +1,35 @@
 import PIL.ImageDraw
 from paddleocr import PaddleOCR
-import fitz
+from fitz import Rect, Page, Point, Document
 from PIL import Image, ImageDraw
 import numpy as np
-# import cv2
-# such import resolves "Cannot find reference 'xxx' in '__init__.py | __init__.py'" issue
-from cv2 import cv2
+import cv2
+# from cv2 import cv2
 import requests
-
-Points4 = list[list[float, float], list[float, float], list[float, float], list[float, float]]
 
 
 class AnnotationMaker:
-    DPI = 150  # change zoom_factor if change this!!!
-    PDF_ZOOM_FACTOR = 0.48  # calculated from 96/150, as most loop drawings are stored in dpi=150, but showed in dpi=96
-    CROP_X0 = 2060  # depends on dpi
-    CROP_Y0 = 130  # depends on dpi
-    CROP_X1 = 2400  # depends on dpi
-    CROP_Y1 = 1300  # depends on dpi
+    DPI = 150
+    PDF_ZOOM_FACTOR = 72/DPI  # most loop drawings are stored in dpi=150, but showed in dpi=72
+    CROP_X0 = 989 * DPI/72
+    CROP_Y0 = 62 * DPI/72
+    CROP_X1 = 1152 * DPI/72
+    CROP_Y1 = 624 * DPI/72
     NODE_TEXTS = ('NODE', 'NCDE', 'N0DE')
     FCS_TEXT_TO_FIND = ('FCS07', 'FCSO7')
     FCS_TEXT_TO_REPLACE_WITH = 'FCS14'
-    _doc: fitz.Document
-    _page: fitz.Page
+    _doc: Document
+    _page: Page
 
     def __init__(self, pdf_path_annotated='pdfs/DEFAULT_annotated.pdf'):
         self._pdf_path_annotated: str = pdf_path_annotated
         self._error_description = ''
-        self._fcs_found_text_rect = None
         self._ocr_result_data = []
         self._pdf_path: str = ''
         self._is_link: bool = False
         self._tries_to_rotate: int = 4
-        self._replaced_with = self._what_to_replace = ''
-        self._node_number_rects: list[Points4] = list()
-        self._new_node_number_text: str = '?'
-        self._node_text_x0 = self._node_text_x2 = self._node_text_y2 = 0
+        self._replaced_with = ''
+        self._node_number_rects = list()
         self._page_pillow_image_cropped: PIL.Image = None
         self._page_pillow_image: PIL.Image = None
         self._page_opencv_image: np.ndarray = None
@@ -55,8 +49,8 @@ class AnnotationMaker:
         return (p1[0] + cls.CROP_X0, p1[1] + cls.CROP_Y0), (p2[0] + cls.CROP_X0, p2[1] + cls.CROP_Y0)
 
     def _get_rect_from_xywh(self, top_left_x: float, top_left_y: float,
-                            rect_width: float, rect_height: float) -> fitz.Rect:
-        tl_point = fitz.Point(top_left_x, top_left_y)
+                            rect_width: float, rect_height: float) -> Rect:
+        tl_point = Point(top_left_x, top_left_y)
         if self._page.rotation in (90, -90, 270):
             tl_point *= self._page.derotation_matrix
             rect_width, rect_height = rect_height, rect_width
@@ -68,10 +62,10 @@ class AnnotationMaker:
             tl_point[0] -= rect_width
         if self._page.rotation == 90:
             tl_point[1] -= rect_height
-        br_point = fitz.Point(tl_point[0] + rect_width, tl_point[1] + rect_height)
-        return fitz.Rect(tl_point, br_point)
+        br_point = Point(tl_point[0] + rect_width, tl_point[1] + rect_height)
+        return Rect(tl_point, br_point)
 
-    def _get_pdfed_rect(self, x0: float, y0: float, x1: float, y1: float) -> fitz.Rect:
+    def _get_pdfed_rect(self, x0: float, y0: float, x1: float, y1: float) -> Rect:
         width = (x1 - x0) * self.PDF_ZOOM_FACTOR
         height = (y1 - y0) * self.PDF_ZOOM_FACTOR
         x = x0 * self.PDF_ZOOM_FACTOR
@@ -108,7 +102,7 @@ class AnnotationMaker:
                 self._set_error(f'Bad response: {response.status_code}')
                 return False
             try:
-                self._doc = fitz.Document(stream=response.content, filetype="pdf")
+                self._doc = Document(stream=response.content, filetype="pdf")
             except Exception as e:
                 self._set_error(f'{self._pdf_path} cannot be open: {str(e)}')
                 return False
@@ -116,9 +110,9 @@ class AnnotationMaker:
             # if _pdf_path is a path, add '_annotated' to the file name
             self._pdf_path_annotated = self._pdf_path[:-4] + '_annotated' + self._pdf_path[-4:]
             # open the pdf file
-            self._append_msg_to_log(f'Opening {self._pdf_path[5:]}...')
+            self._append_msg_to_log(f'Opening {self._pdf_path}...')
             try:
-                self._doc = fitz.Document(self._pdf_path)
+                self._doc = Document(self._pdf_path)
             except Exception as e:
                 self._set_error(f'{self._pdf_path} cannot be open: {str(e)}')
                 return False
@@ -129,7 +123,7 @@ class AnnotationMaker:
         return True
 
     def _get_pics_from_page(self):
-        pix = self._page.get_pixmap(dpi=AnnotationMaker.DPI)
+        pix = self._page.get_pixmap(dpi=self.DPI)
 
         # converting page into pillow format
         self._page_pillow_image = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
@@ -142,8 +136,8 @@ class AnnotationMaker:
 
         # cropping the right part of the page image
         self._page_pillow_image_cropped = self._page_pillow_image.crop(
-            (AnnotationMaker.CROP_X0, AnnotationMaker.CROP_Y0,
-             AnnotationMaker.CROP_X1, AnnotationMaker.CROP_Y1))
+            (int(self.CROP_X0), int(self.CROP_Y0),
+             int(self.CROP_X1), int(self.CROP_Y1)))
 
         # converting the pillow image into nampy array
         self._cropped_page_opencv_image = np.asarray(self._page_pillow_image_cropped)
@@ -160,8 +154,8 @@ class AnnotationMaker:
     def _analyze_ocred_data(self) -> bool:
         assert self._ocr_result_data is not [], "cannot ocr empty data"
 
-        fcs_rect: Points4 = list()
-        node_text_rect: Points4 = list()
+        fcs_rect = list()
+        node_text_rect = list()
 
         # preparing to draw on the cropped image
         draw = ImageDraw.Draw(self._page_pillow_image_cropped)
@@ -170,11 +164,11 @@ class AnnotationMaker:
         for block in self._ocr_result_data:
             # draw a RED rectangle for ALL texts found
             try:
-                draw.rectangle((tuple(block[0][0]), tuple(block[0][2])), width=2, outline='red')
+                draw.rectangle(tuple(block[0][0] + block[0][2]), width=2, outline='red')
             except Exception as e:
                 self._append_msg_to_log(f'Exception while drawing a rectangle: {str(e)}')
             # saving coordinates for later
-            coordinates: Points4 = block[0]
+            coordinates: list[list[float: 2]: 4] = block[0]
             # saving text for later
             text: str = block[1][0]
 
@@ -182,7 +176,7 @@ class AnnotationMaker:
             if text[:5] in self.FCS_TEXT_TO_FIND:
                 # saving coordinates of the desired text ('FCS07' in our case)
                 fcs_rect = coordinates
-                self._append_msg_to_log(f'{AnnotationMaker.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
+                self._append_msg_to_log(f'{self.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
 
                 # as we found the FCS text, there is no need to rotate the page and searching the text again
                 self._tries_to_rotate = 0
@@ -192,13 +186,12 @@ class AnnotationMaker:
                 # noinspection PyTypeChecker
                 self._fcs_bottom_right_cropped: tuple[float, float] = tuple(fcs_rect[2])
                 # forming a full text which replaces the old one
-                self._what_to_replace = text
                 what_to_add = text[5:]
-                self._replaced_with = AnnotationMaker.FCS_TEXT_TO_REPLACE_WITH + what_to_add
-                draw.rectangle((self._fcs_top_left_cropped, self._fcs_bottom_right_cropped), outline='blue', width=2)
+                self._replaced_with = self.FCS_TEXT_TO_REPLACE_WITH + what_to_add
+                draw.rectangle(tuple(self._fcs_top_left_cropped + self._fcs_bottom_right_cropped), outline='blue', width=2)
 
             # checking if it is the 'NODE' text
-            if text in AnnotationMaker.NODE_TEXTS:
+            if text in self.NODE_TEXTS:
                 # saving the 'NODE' text coordinates for later
                 node_text_rect = coordinates
                 self._append_msg_to_log(f'NODE was found in {node_text_rect}')
@@ -207,10 +200,6 @@ class AnnotationMaker:
                 # sometimes nn text is a bit more on the right, that the NODE text, so +15
                 self._node_text_x2 = coordinates[2][0] + 15
                 self._node_text_y2 = coordinates[2][1]
-                # noinspection PyTypeChecker
-                self._nn_top_left_cropped: tuple[float, float] = (*node_text_rect[0],)
-                # noinspection PyTypeChecker
-                self._nn_bottom_right_cropped: tuple[float, float] = tuple(node_text_rect[2])
 
             # checking the actual node number text, it makes sense only after the 'NODE' text has already been found
             if node_text_rect is not None and set(text).issubset('0123456789'):
@@ -229,7 +218,7 @@ class AnnotationMaker:
 
         # if the FCS text was not found, rotate the page and decrement the number of tries left
         if not fcs_rect:
-            self._append_msg_to_log(f'{AnnotationMaker.FCS_TEXT_TO_FIND} was NOT found')
+            self._append_msg_to_log(f'{self.FCS_TEXT_TO_FIND} was NOT found')
             self._page.set_rotation(self._page.rotation + 90)
             self._tries_to_rotate -= 1
             self._append_msg_to_log(f'Rotating the page, {self._tries_to_rotate} tries left...')
@@ -261,7 +250,7 @@ class AnnotationMaker:
 
         # drawing on the page image and saving it for debug purposes
         draw = ImageDraw.Draw(self._page_pillow_image)
-        draw.rectangle((fcs_top_left, fcs_bottom_right), outline='blue', width=2)
+        draw.rectangle(tuple(fcs_top_left + fcs_bottom_right), outline='blue', width=2)
         self._page_pillow_image.save('images/img_original_marked.png', format='PNG')
 
         self._page.add_line_annot((self._fcs_found_text_rect[0], self._fcs_found_text_rect[1]),
@@ -284,8 +273,8 @@ class AnnotationMaker:
             nn_new_y0: float = nn_top_left[1]
             nn_new_x1: float = nn_new_x0 + (nn_bottom_right[0] - nn_top_left[0]) + 10
             nn_new_y1: float = nn_new_y0 + (nn_bottom_right[1] - nn_top_left[1]) + 10
-            nn_new_text_rect: fitz.Rect = self._get_pdfed_rect(nn_new_x0, nn_new_y0, nn_new_x1, nn_new_y1)
-            node_number_text_rect: fitz.Rect = self._get_pdfed_rect(*nn_top_left, *nn_bottom_right)
+            nn_new_text_rect: Rect = self._get_pdfed_rect(nn_new_x0, nn_new_y0, nn_new_x1, nn_new_y1)
+            node_number_text_rect: Rect = self._get_pdfed_rect(*nn_top_left, *nn_bottom_right)
 
             # adding Node numbers annotations into pdf
             self._page.add_line_annot((node_number_text_rect[0], node_number_text_rect[1]),
@@ -329,15 +318,20 @@ class AnnotationMaker:
 
         # returns True if success, otherwise False
 
-    def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
+    def _set_pdf_path(self, pdf_path) -> bool:
         # path or link to a pdf file
         if pdf_path in ('', None):
             self._set_error(f'pdf path cannot be empty')
             return False
         else:
             self._pdf_path = pdf_path
+            return True
 
+    def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
         self._is_link = is_link
+
+        if not self._set_pdf_path(pdf_path):
+            return False
 
         if not self._open_doc():
             return False
@@ -358,4 +352,71 @@ class AnnotationMaker:
         self._append_msg_to_log(f'Saving the annotated pdf and closing the document...')
         self._doc.save(self._pdf_path_annotated)
         self._clear_error()
+        return True
+
+
+class AnnotationMakerNew(AnnotationMaker):
+    DPI = 150  # change zoom_factor if change this!!!
+    CROP_X0 = 730 * DPI/72
+    CROP_Y0 = 12 * DPI/72
+    CROP_X1 = 1176 * DPI/72
+    CROP_Y1 = 710 * DPI/72
+
+    def __init__(self, pdf_path_annotated='pdfs/DEFAULT_annotated.pdf'):
+        super().__init__(pdf_path_annotated)
+        self._fcs_new_texts: list[str] = list()
+        self._fcs_rects = list()
+
+    def _analyze_ocred_data(self) -> bool:
+        assert self._ocr_result_data is not [], "cannot ocr empty data"
+
+        # preparing to draw on the cropped image
+        draw = ImageDraw.Draw(self._page_pillow_image_cropped)
+
+        # checking every block of text
+        for block in self._ocr_result_data:
+            # draw a RED rectangle for ALL texts found
+            try:
+                draw.rectangle(tuple(block[0][0] + block[0][2]), width=2, outline='red')
+            except Exception as e:
+                self._append_msg_to_log(f'Exception while drawing a rectangle: {str(e)}')
+            # saving coordinates for later
+            coordinates: list[list[float, float]:4] = block[0]
+            # saving text for later
+            text: str = block[1][0]
+
+            if text[:5] in self.FCS_TEXT_TO_FIND:
+                fcs_rect = coordinates
+                self._fcs_rects.append(fcs_rect)
+                self._append_msg_to_log(f'{self.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
+
+                # forming a full text which replaces the old one
+                # example: FCS0702-01-03 to be replaced with FCS1402-02-03
+                temp_text = self.FCS_TEXT_TO_REPLACE_WITH + text[5:]
+                node_number = temp_text[8:10]  # with leading zero
+                new_node_number = "{:02d}".format(int(node_number) + 1)
+                replaced_with = temp_text[:8] + new_node_number + temp_text[10:]
+                self._fcs_new_texts.append(replaced_with)
+
+                try:
+                    draw.rectangle(tuple(fcs_rect[0] + fcs_rect[2]), outline='blue', width=2)
+                except Exception as e:
+                    self._append_msg_to_log(f'Exception while drawing a rectangle: {str(e)}')
+
+        self._page_pillow_image_cropped.save('images/img_cropped.png', format='PNG')
+        return True
+
+    def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
+        self._is_link = is_link
+
+        if not self._set_pdf_path(pdf_path):
+            return False
+
+        if not self._open_doc():
+            return False
+
+        ocr_success = False
+        self._get_pics_from_page()
+        self._ocr_cropped_image()
+        self._analyze_ocred_data()
         return True
