@@ -1,11 +1,12 @@
 import PIL.ImageDraw
 from PIL.Image import Image
 from paddleocr import PaddleOCR
-from fitz import Rect, Page, Point, Document
+from fitz import Rect, Page, Point, Document, TEXT_ALIGN_RIGHT
 from PIL import Image, ImageDraw
 import numpy as np
 import cv2
 import requests
+import re
 
 
 class AnnotationMakerBase:
@@ -237,7 +238,7 @@ class AnnotationMakerOld(AnnotationMakerBase):
             if text[:5] in self.FCS_TEXT_TO_FIND:
                 # saving coordinates of the desired text ('FCS07' in our case)
                 fcs_rect: list[list[float: 2]: 4] = coordinates
-                self._append_msg_to_log(f'{self.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
+                self._append_msg_to_log(f'{text} was found in {fcs_rect}')
 
                 # as we found the FCS text, there is no need to rotate the page and searching the text again
                 self._tries_to_rotate = 0
@@ -364,7 +365,11 @@ class AnnotationMakerOld(AnnotationMakerBase):
         self._add_stamp()
 
         self._append_msg_to_log(f'Saving the annotated pdf and closing the document...')
-        self._doc.save(self._pdf_path_annotated)
+        try:
+            self._doc.save(self._pdf_path_annotated)
+        except Exception as e:
+            self._append_msg_to_log(f'Error while saving the annotated pdf: {str(e)}')
+            return False
         self._clear_error()
         # returns True if success, otherwise False
         return True
@@ -381,9 +386,14 @@ class AnnotationMakerNew(AnnotationMakerBase):
         super().__init__(pdf_path_annotated)
         self._fcs_new_texts: list[str] = list()
         self._fcs_rects: list[list[list[float: 2]: 4]] = list()
+        self._node_rects: list[list[list[float: 2]: 4]] = list()
+        self._node_text_lengths: list[int] = list()
+        self._new_node_numbers: list[int] = list()
 
     def _analyze_ocred_data(self) -> bool:
         assert self._ocr_result_data is not [], "cannot ocr empty data"
+
+        node_regex = re.compile(r"^N[O0C]DE\s*(\d{1,2})\s*$")
 
         # preparing to draw on the cropped image
         draw = ImageDraw.Draw(self._page_pillow_image_cropped)
@@ -403,14 +413,14 @@ class AnnotationMakerNew(AnnotationMakerBase):
             if text[:5] in self.FCS_TEXT_TO_FIND:
                 fcs_rect: list[list[float: 2]: 4] = coordinates
                 self._fcs_rects.append(fcs_rect)
-                self._append_msg_to_log(f'{self.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
+                self._append_msg_to_log(f'{text} was found in {fcs_rect}')
 
                 # forming a full text which replaces the old one
                 # example: FCS0702-01-03 to be replaced with FCS1402-02-03
                 temp_text = self.FCS_TEXT_TO_REPLACE_WITH + text[5:]
-                node_number = temp_text[8:10]  # with leading zero
-                new_node_number = "{:02d}".format(int(node_number) + 1)
-                replaced_with = temp_text[:8] + new_node_number + temp_text[10:]
+                fcs_node_number = temp_text[8:10]  # with leading zero
+                new_fcs_node_number = "{:02d}".format(int(fcs_node_number) + 1)
+                replaced_with = temp_text[:8] + new_fcs_node_number + temp_text[10:]
                 self._fcs_new_texts.append(replaced_with)
 
                 try:
@@ -418,8 +428,30 @@ class AnnotationMakerNew(AnnotationMakerBase):
                 except Exception as e:
                     self._append_msg_to_log(f'Exception while drawing a rectangle: {str(e)}')
 
+            if text[:4] in self.NODE_TEXTS:
+                node_rect: list[list[float: 2]: 4] = coordinates
+                # Additional check if there is digits after the node text
+                matching_result = node_regex.match(text)
+                if matching_result is not None:
+                    node_number: int = int(matching_result.group(1))
+                    new_node_number = node_number + 1
+                    self._node_rects.append(node_rect)
+                    self._new_node_numbers.append(new_node_number)
+                    self._node_text_lengths.append(len(text))
+                    self._append_msg_to_log(f'{text} was found in {node_rect}, {node_number=}')
+                    try:
+                        draw.rectangle(tuple(node_rect[0] + node_rect[2]), outline='green', width=2)
+                    except Exception as e:
+                        self._append_msg_to_log(f'Exception while drawing a rectangle: {str(e)}')
+
         self._page_pillow_image_cropped.save('images/img_cropped.png', format='PNG')
-        return True
+
+        if len(self._fcs_rects) != len(self._node_rects):
+            self._append_msg_to_log(f'WARNING: number of FCS texts found is not equal to numbers of NODE texts with '
+                                    f'digits')
+
+        # if not FCS texts found, return False
+        return len(self._fcs_rects) > 0
 
     def _add_fcs_annotations(self) -> None:
         # preparing to draw on the page image for debug purposes
@@ -433,21 +465,47 @@ class AnnotationMakerNew(AnnotationMakerBase):
             draw.rectangle(tuple(fcs_page_line_top_left + fcs_page_line_bottom_right), outline='blue', width=2)
             # calculating page coordinates for a text annotation
             # x0_new = 2*x0-x1-5, y0, # x1_new = x0-5, y1
-            fcs_text_page_top_left = (2*fcs_page_line_top_left[0] - fcs_page_line_bottom_right[0] - 5, fcs_page_line_top_left[1])
-            fcs_text_page_bottom_right = (fcs_page_line_top_left[0] - 5, fcs_page_line_bottom_right[1])
+            fcs_text_page_top_left = (2*fcs_page_line_top_left[0] - fcs_page_line_bottom_right[0] - 5,
+                                      fcs_page_line_top_left[1] + 5)
+            fcs_text_page_bottom_right = (fcs_page_line_top_left[0] - 5, fcs_page_line_bottom_right[1] + 5)
             # calculating pdf coordinates for a text annotation
             fcs_pdf_new_text_rect = self._get_pdfed_rect(*fcs_text_page_top_left, *fcs_text_page_bottom_right)
             # calculating pdf coordinates for a line annotation
             fcs_pdf_line_rect = self._get_pdfed_rect(*fcs_page_line_top_left, *fcs_page_line_bottom_right)
             # adding a line annotation into pdf
-            self._page.add_line_annot((fcs_pdf_line_rect[0], fcs_pdf_line_rect[1]),
-                                      (fcs_pdf_line_rect[2], fcs_pdf_line_rect[3]))
+            try:
+                self._page.add_line_annot((fcs_pdf_line_rect[0], fcs_pdf_line_rect[1]),
+                                          (fcs_pdf_line_rect[2], fcs_pdf_line_rect[3]))
+            except Exception as e:
+                self._append_msg_to_log(f'WARNING: failed to add an FCS line annotation: {str(e)}')
             # adding a text annotation into pdf
-            self._page.add_freetext_annot(fcs_pdf_new_text_rect, fcs_text, text_color=(255, 0, 0),
-                                          border_color=None, rotate=self._page.rotation, fontsize=4)
+            try:
+                self._page.add_freetext_annot(fcs_pdf_new_text_rect, fcs_text, text_color=(255, 0, 0),
+                                              border_color=None, rotate=self._page.rotation, fontsize=4)
+            except Exception as e:
+                self._append_msg_to_log(f'WARNING: failed to add an FCS text annotation: {str(e)}')
 
         # saving the image for debug purposes
         self._page_pillow_image.save('images/img_original_marked.png', format='PNG')
+        return
+
+    # adding NODE annotations into pdf
+    def _add_node_annotations(self):
+        # for each found NODE rectangle and new node number
+        for node_rect, new_node_number, node_text_len in zip(self._node_rects, self._new_node_numbers,
+                                                             self._node_text_lengths):
+            node_page_rect_top_left, node_page_rect_bottom_right = self._get_points_from_cropped(node_rect[0],
+                                                                                                 node_rect[2])
+            node_page_line_top_left = (node_page_rect_top_left[0], node_page_rect_top_left[1]+5)
+            node_page_line_bottom_right = node_page_rect_bottom_right
+            node_pdf_new_text_rect = self._get_pdfed_rect(*node_page_line_top_left, *node_page_line_bottom_right)
+            # adding a text annotation into pdf
+            try:
+                self._page.add_freetext_annot(node_pdf_new_text_rect, f'NODE {str(new_node_number)}',
+                                              text_color=(255, 0, 0), border_color=None, rotate=self._page.rotation,
+                                              fontsize=4, fill_color=(1, 1, 1))
+            except Exception as e:
+                self._append_msg_to_log(f'WARNING: failed to add a node number annotation: {str(e)}')
         return
 
     def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
@@ -462,12 +520,21 @@ class AnnotationMakerNew(AnnotationMakerBase):
         ocr_success = False
         super()._get_pics_from_page()
         super()._ocr_cropped_image()
-        self._analyze_ocred_data()
+        ocr_success = self._analyze_ocred_data()
+
+        if not ocr_success:
+            return False
+
         self._add_fcs_annotations()
+        self._add_node_annotations()
         self._add_stamp()
 
         self._append_msg_to_log(f'Saving the annotated pdf and closing the document...')
-        self._doc.save(self._pdf_path_annotated)
+        try:
+            self._doc.save(self._pdf_path_annotated)
+        except Exception as e:
+            self._append_msg_to_log(f'Error while saving the annotated pdf: {str(e)}')
+            return False
         self._clear_error()
 
         return True

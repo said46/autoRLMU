@@ -1,6 +1,6 @@
 import openpyxl as xl
 import os
-from autoRLMU import AnnotationMakerOld
+from autoRLMU import AnnotationMakerOld, AnnotationMakerNew
 
 
 os.system("cls")
@@ -27,7 +27,7 @@ try:
 
         # creating object
         pdf_path_annotated: str = f'pdfs/{loop["Doc Number"]}.pdf'
-        loop_drawing = AnnotationMakerOld(pdf_path_annotated)
+        loop_drawing = AnnotationMakerNew(pdf_path_annotated)
 
         # trying to make a redline
         is_redlined_successfully = loop_drawing.make_redline(loop['Link'], is_link=False)
@@ -38,8 +38,7 @@ try:
 
         # filling the result in the Excel file
         sheet.cell(row, 3).value = loop["Result"]
-        if loop["Result"] != "Success":
-            sheet.cell(row, 4).value = loop_drawing.get_log()
+        sheet.cell(row, 4).value = loop_drawing.get_log()
 
         try:
             wb.save('loop_diagrams.xlsx')
