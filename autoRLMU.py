@@ -17,7 +17,7 @@ class AnnotationMakerBase:
     CROP_X1 = 1152 * DPI / 72
     CROP_Y1 = 624 * DPI / 72
     NODE_TEXTS = ('NODE', 'NCDE', 'N0DE')
-    FCS_TEXT_TO_FIND = ('FCS07', 'FCSO7')
+    FCS_TEXT_TO_FIND = ('FCS07', 'FCSO7', 'FSC07')
     FCS_TEXT_TO_REPLACE_WITH = 'FCS14'
     _doc: Document
     _page: Page
@@ -378,7 +378,7 @@ class AnnotationMakerNew(AnnotationMakerBase):
     def _analyze_ocred_data(self) -> bool:
         assert self._ocr_result_data is not [], "cannot ocr empty data"
 
-        fcs_regex = re.compile(r"^FCS\d\d(\d\d)-?(\d\d)-?(\d\d).*$")
+        fcs_regex = re.compile(r"^(FCS|FSC)\d\d(\d\d)-?(\d\d)-?(\d\d).*$")
         node_regex = re.compile(r"^N[O0C]DE\s*(\d{1,2})\s*$")
 
         # preparing to draw on the cropped image
@@ -395,16 +395,17 @@ class AnnotationMakerNew(AnnotationMakerBase):
             coordinates: list[list[float, float]:4] = block[0]
             # saving text for later
             text: str = block[1][0]
+            print(f"{text=}")
 
             if text[:5] in self.FCS_TEXT_TO_FIND and len(text) > 7:
                 fcs_rect: list[list[float: 2]: 4] = coordinates
                 matching_result = fcs_regex.match(text)
                 if matching_result is not None:
-                    node_number: int = int(matching_result.group(2))
+                    node_number: int = int(matching_result.group(3))
                     new_node_number = node_number + 1
-                    fcs_name = self.FCS_TEXT_TO_REPLACE_WITH + matching_result.group(1)
+                    fcs_name = self.FCS_TEXT_TO_REPLACE_WITH + matching_result.group(2)
                     new_fcs_node_number = "{:02d}".format(int(new_node_number))
-                    replaced_with = f"{fcs_name}-{new_fcs_node_number}-{matching_result.group(3)}"
+                    replaced_with = f"{fcs_name}-{new_fcs_node_number}-{matching_result.group(4)}"
                     self._fcs_new_texts.append(replaced_with)
                     self._fcs_rects.append(fcs_rect)
                     self._append_msg_to_log(f'{text} was found in {fcs_rect}')

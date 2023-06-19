@@ -27,7 +27,7 @@ try:
 
         # creating object
         pdf_path_annotated: str = f'pdfs/{loop["Doc Number"]}.pdf'
-        loop_drawing = AnnotationMakerNew(pdf_path_annotated)
+        loop_drawing = AnnotationMakerNew()
 
         # trying to make a redline
         is_redlined_successfully = loop_drawing.make_redline(loop['Link'])
