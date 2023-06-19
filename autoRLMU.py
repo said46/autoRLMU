@@ -378,6 +378,7 @@ class AnnotationMakerNew(AnnotationMakerBase):
     def _analyze_ocred_data(self) -> bool:
         assert self._ocr_result_data is not [], "cannot ocr empty data"
 
+        fcs_regex = re.compile(r"^FCS\d\d(\d\d)-?(\d\d)-?(\d\d).*$")
         node_regex = re.compile(r"^N[O0C]DE\s*(\d{1,2})\s*$")
 
         # preparing to draw on the cropped image
@@ -397,19 +398,16 @@ class AnnotationMakerNew(AnnotationMakerBase):
 
             if text[:5] in self.FCS_TEXT_TO_FIND and len(text) > 7:
                 fcs_rect: list[list[float: 2]: 4] = coordinates
-                self._fcs_rects.append(fcs_rect)
-                self._append_msg_to_log(f'{text} was found in {fcs_rect}')
-
-                # forming a full text which replaces the old one
-                # example: FCS0702-01-03 to be replaced with FCS1402-02-03
-                # redesign it with re, there is a lot of such patterns:
-                # FCS07210707 -> FCS14210717 with the current implementation
-                temp_text = self.FCS_TEXT_TO_REPLACE_WITH + text[5:]
-                fcs_node_number = temp_text[8:10]  # with leading zero
-                new_fcs_node_number = "{:02d}".format(int(fcs_node_number) + 1)
-                replaced_with = temp_text[:8] + new_fcs_node_number + temp_text[10:]
-                self._fcs_new_texts.append(replaced_with)
-
+                matching_result = fcs_regex.match(text)
+                if matching_result is not None:
+                    node_number: int = int(matching_result.group(2))
+                    new_node_number = node_number + 1
+                    fcs_name = self.FCS_TEXT_TO_REPLACE_WITH + matching_result.group(1)
+                    new_fcs_node_number = "{:02d}".format(int(new_node_number))
+                    replaced_with = f"{fcs_name}-{new_fcs_node_number}-{matching_result.group(3)}"
+                    self._fcs_new_texts.append(replaced_with)
+                    self._fcs_rects.append(fcs_rect)
+                    self._append_msg_to_log(f'{text} was found in {fcs_rect}')
                 try:
                     draw.rectangle(tuple(fcs_rect[0] + fcs_rect[2]), outline='blue', width=2)
                 except Exception as e:
