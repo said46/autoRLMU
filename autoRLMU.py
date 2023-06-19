@@ -1,20 +1,20 @@
 import PIL.ImageDraw
+from PIL.Image import Image
 from paddleocr import PaddleOCR
 from fitz import Rect, Page, Point, Document
 from PIL import Image, ImageDraw
 import numpy as np
 import cv2
-# from cv2 import cv2
 import requests
 
 
-class AnnotationMaker:
+class AnnotationMakerBase:
     DPI = 150
-    PDF_ZOOM_FACTOR = 72/DPI  # most loop drawings are stored in dpi=150, but showed in dpi=72
-    CROP_X0 = 989 * DPI/72
-    CROP_Y0 = 62 * DPI/72
-    CROP_X1 = 1152 * DPI/72
-    CROP_Y1 = 624 * DPI/72
+    PDF_ZOOM_FACTOR = 72 / DPI  # most loop drawings are stored in dpi=150, but showed in dpi=72
+    CROP_X0 = 989 * DPI / 72
+    CROP_Y0 = 62 * DPI / 72
+    CROP_X1 = 1152 * DPI / 72
+    CROP_Y1 = 624 * DPI / 72
     NODE_TEXTS = ('NODE', 'NCDE', 'N0DE')
     FCS_TEXT_TO_FIND = ('FCS07', 'FCSO7')
     FCS_TEXT_TO_REPLACE_WITH = 'FCS14'
@@ -27,15 +27,13 @@ class AnnotationMaker:
         self._ocr_result_data = []
         self._pdf_path: str = ''
         self._is_link: bool = False
-        self._tries_to_rotate: int = 4
         self._replaced_with = ''
-        self._node_number_rects = list()
         self._page_pillow_image_cropped: PIL.Image = None
         self._page_pillow_image: PIL.Image = None
-        self._page_opencv_image: np.ndarray = None
-        self._cropped_page_opencv_image: np.ndarray = None
-        self._doc = None
-        self._page = None
+        self._page_opencv_image: np.ndarray | None = None
+        self._cropped_page_opencv_image: np.ndarray | None = None
+        self._doc: Document | None = None
+        self._page: Page | None = None
         self._log: list[str] = []
         # need to run only once to download and load model into memory
         self._ocr: PaddleOCR.ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
@@ -132,7 +130,7 @@ class AnnotationMaker:
         self._page_pillow_image.save('images/img_original.png', format='PNG')
 
         # will be used to find empty space on the page
-        self._page_opencv_image = np.asarray(self._page_pillow_image)
+        self._page_opencv_image: np.ndarray = np.asarray(self._page_pillow_image)
 
         # cropping the right part of the page image
         self._page_pillow_image_cropped = self._page_pillow_image.crop(
@@ -140,7 +138,20 @@ class AnnotationMaker:
              int(self.CROP_X1), int(self.CROP_Y1)))
 
         # converting the pillow image into nampy array
-        self._cropped_page_opencv_image = np.asarray(self._page_pillow_image_cropped)
+        self._cropped_page_opencv_image: np.ndarray = np.asarray(self._page_pillow_image_cropped)
+        cv2.imwrite(f'images/img_pre-processed_0_{self.DPI}.png', self._cropped_page_opencv_image)
+
+        # *************** test of image preparation, may worsen the ocr result *******************
+        # self._cropped_page_opencv_image = cv2.cvtColor(self._cropped_page_opencv_image, cv2.COLOR_BGR2GRAY)
+        # cv2.imwrite(f'images/img_pre-processed_1_{self.DPI}.png', self._cropped_page_opencv_image)
+        # threshold the image using Otsu's thresholding method
+        # self._cropped_page_opencv_image = cv2.threshold(self._cropped_page_opencv_image, 0, 255, \
+        #                                                 cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+        # cv2.imwrite(f'images/img_pre-processed_2_{self.DPI}.png', self._cropped_page_opencv_image)
+        # kernel = np.ones((2, 2), np.uint8)
+        # self._cropped_page_opencv_image = cv2.dilate(temp_image, kernel, iterations=1)
+        # *************** test of image preparation, may worsen the ocr result *******************
+
         return
 
     def _ocr_cropped_image(self):
@@ -151,6 +162,56 @@ class AnnotationMaker:
         return
 
     # returns False if failed
+
+    def _add_stamp(self):
+        # defining static coordinates for the stamp is a bad idea, because the stamp may overlap with useful info
+        # stamp_rect = (1400, 1000, 1800, 1200)
+        # instead, we find an empty space for the stamp!
+        grayed_page_image = cv2.cvtColor(self._page_opencv_image, cv2.COLOR_BGR2GRAY)
+
+        # create a grayscale image 200x400
+        empty_template = np.zeros([200, 400, 1], dtype=np.uint8)
+        # fill with 254 color (255 is white in grayscale), for some reason it is the prevailing color
+        empty_template.fill(254)
+        # getting width and height to calculate the rectangle later
+        template_h, template_w = empty_template.shape[0:2]
+
+        # finding an empty space
+        match_method = cv2.TM_SQDIFF
+        res = cv2.matchTemplate(grayed_page_image, empty_template, match_method)
+        # cv2.normalize(res, res, 0, 1, cv2.NORM_MINMAX, -1) # it seems like it is not needed
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res, None)
+        if match_method in (cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED):
+            location = min_loc
+        else:
+            location = max_loc
+
+        # calculating the stamp rectangle coordinates
+        bottom_right = (location[0] + template_w, location[1] + template_h)
+        stamp_rect = (location, bottom_right)
+        stamp_rect = self._get_pdfed_rect(*stamp_rect[0], *stamp_rect[1])
+
+        # adding the stamp
+        self._page.insert_image(stamp_rect, filename='images/RLMU_Stamp.png', keep_proportion=True,
+                                overlay=True, rotate=self._page.rotation)
+        return
+
+    def _set_pdf_path(self, pdf_path) -> bool:
+        # path or link to a pdf file
+        if pdf_path in ('', None):
+            self._set_error(f'pdf path cannot be empty')
+            return False
+        else:
+            self._pdf_path = pdf_path
+            return True
+
+
+class AnnotationMakerOld(AnnotationMakerBase):
+    def __init__(self, pdf_path_annotated='pdfs/DEFAULT_annotated.pdf'):
+        super().__init__(pdf_path_annotated)
+        self._tries_to_rotate: int = 4
+        self._node_number_rects = list()
+
     def _analyze_ocred_data(self) -> bool:
         assert self._ocr_result_data is not [], "cannot ocr empty data"
 
@@ -175,20 +236,19 @@ class AnnotationMaker:
             # checking first five symbols for the desired text ('FCS07' in our case)
             if text[:5] in self.FCS_TEXT_TO_FIND:
                 # saving coordinates of the desired text ('FCS07' in our case)
-                fcs_rect = coordinates
+                fcs_rect: list[list[float: 2]: 4] = coordinates
                 self._append_msg_to_log(f'{self.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
 
                 # as we found the FCS text, there is no need to rotate the page and searching the text again
                 self._tries_to_rotate = 0
 
-                # noinspection PyTypeChecker
                 self._fcs_top_left_cropped: tuple[float, float] = tuple(fcs_rect[0])
-                # noinspection PyTypeChecker
                 self._fcs_bottom_right_cropped: tuple[float, float] = tuple(fcs_rect[2])
                 # forming a full text which replaces the old one
                 what_to_add = text[5:]
                 self._replaced_with = self.FCS_TEXT_TO_REPLACE_WITH + what_to_add
-                draw.rectangle(tuple(self._fcs_top_left_cropped + self._fcs_bottom_right_cropped), outline='blue', width=2)
+                draw.rectangle(tuple(self._fcs_top_left_cropped + self._fcs_bottom_right_cropped), outline='blue',
+                               width=2)
 
             # checking if it is the 'NODE' text
             if text in self.NODE_TEXTS:
@@ -233,7 +293,7 @@ class AnnotationMaker:
         return True
 
     # adding FCS annotations into pdf
-    def _add_fcs_annotations(self):
+    def _add_fcs_annotations(self) -> None:
         # calculating pdf coordinates of found FCS text
         fcs_top_left, fcs_bottom_right = self._get_points_from_cropped(self._fcs_top_left_cropped,
                                                                        self._fcs_bottom_right_cropped)
@@ -283,56 +343,10 @@ class AnnotationMaker:
                                           border_color=None, rotate=self._page.rotation, fontsize=8)
         return
 
-    def _add_stamp(self):
-        # defining static coordinates for the stamp is a bad idea, because the stamp may overlap with useful info
-        # stamp_rect = (1400, 1000, 1800, 1200)
-        # instead, we find an empty space for the stamp!
-        grayed_page_image = cv2.cvtColor(self._page_opencv_image, cv2.COLOR_BGR2GRAY)
-
-        # create a grayscale image 200x400
-        empty_template = np.zeros([200, 400, 1], dtype=np.uint8)
-        # fill with 254 color (255 is white in grayscale), for some reason it is the prevailing color
-        empty_template.fill(254)
-        # getting width and height to calculate the rectangle later
-        template_h, template_w = empty_template.shape[0:2]
-
-        # finding an empty space
-        match_method = cv2.TM_SQDIFF
-        res = cv2.matchTemplate(grayed_page_image, empty_template, match_method)
-        # cv2.normalize(res, res, 0, 1, cv2.NORM_MINMAX, -1) # it seems like it is not needed
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res, None)
-        if match_method in (cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED):
-            location = min_loc
-        else:
-            location = max_loc
-
-        # calculating the stamp rectangle coordinates
-        bottom_right = (location[0] + template_w, location[1] + template_h)
-        stamp_rect = (location, bottom_right)
-        stamp_rect = self._get_pdfed_rect(*stamp_rect[0], *stamp_rect[1])
-
-        # adding the stamp
-        self._page.insert_image(stamp_rect, filename='images/RLMU_Stamp.png', keep_proportion=True,
-                                overlay=True, rotate=self._page.rotation)
-        return
-
-        # returns True if success, otherwise False
-
-    def _set_pdf_path(self, pdf_path) -> bool:
-        # path or link to a pdf file
-        if pdf_path in ('', None):
-            self._set_error(f'pdf path cannot be empty')
-            return False
-        else:
-            self._pdf_path = pdf_path
-            return True
-
     def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
         self._is_link = is_link
-
         if not self._set_pdf_path(pdf_path):
             return False
-
         if not self._open_doc():
             return False
 
@@ -352,20 +366,21 @@ class AnnotationMaker:
         self._append_msg_to_log(f'Saving the annotated pdf and closing the document...')
         self._doc.save(self._pdf_path_annotated)
         self._clear_error()
+        # returns True if success, otherwise False
         return True
 
 
-class AnnotationMakerNew(AnnotationMaker):
+class AnnotationMakerNew(AnnotationMakerBase):
     DPI = 150  # change zoom_factor if change this!!!
-    CROP_X0 = 730 * DPI/72
-    CROP_Y0 = 12 * DPI/72
-    CROP_X1 = 1176 * DPI/72
-    CROP_Y1 = 710 * DPI/72
+    CROP_X0 = 730 * DPI / 72
+    CROP_Y0 = 12 * DPI / 72
+    CROP_X1 = 1176 * DPI / 72
+    CROP_Y1 = 710 * DPI / 72
 
     def __init__(self, pdf_path_annotated='pdfs/DEFAULT_annotated.pdf'):
         super().__init__(pdf_path_annotated)
         self._fcs_new_texts: list[str] = list()
-        self._fcs_rects = list()
+        self._fcs_rects: list[list[list[float: 2]: 4]] = list()
 
     def _analyze_ocred_data(self) -> bool:
         assert self._ocr_result_data is not [], "cannot ocr empty data"
@@ -386,7 +401,7 @@ class AnnotationMakerNew(AnnotationMaker):
             text: str = block[1][0]
 
             if text[:5] in self.FCS_TEXT_TO_FIND:
-                fcs_rect = coordinates
+                fcs_rect: list[list[float: 2]: 4] = coordinates
                 self._fcs_rects.append(fcs_rect)
                 self._append_msg_to_log(f'{self.FCS_TEXT_TO_FIND} was found in {fcs_rect}')
 
@@ -406,6 +421,35 @@ class AnnotationMakerNew(AnnotationMaker):
         self._page_pillow_image_cropped.save('images/img_cropped.png', format='PNG')
         return True
 
+    def _add_fcs_annotations(self) -> None:
+        # preparing to draw on the page image for debug purposes
+        draw = ImageDraw.Draw(self._page_pillow_image)
+
+        # for each found FCS rectangle and text
+        for fcs_rect, fcs_text in zip(self._fcs_rects, self._fcs_new_texts):
+            # calculating absolute page coordinates for a line annotation
+            fcs_page_line_top_left, fcs_page_line_bottom_right = self._get_points_from_cropped(fcs_rect[0], fcs_rect[2])
+            # drawing a blue rectangle on the page image for debug purposes
+            draw.rectangle(tuple(fcs_page_line_top_left + fcs_page_line_bottom_right), outline='blue', width=2)
+            # calculating page coordinates for a text annotation
+            # x0_new = 2*x0-x1-5, y0, # x1_new = x0-5, y1
+            fcs_text_page_top_left = (2*fcs_page_line_top_left[0] - fcs_page_line_bottom_right[0] - 5, fcs_page_line_top_left[1])
+            fcs_text_page_bottom_right = (fcs_page_line_top_left[0] - 5, fcs_page_line_bottom_right[1])
+            # calculating pdf coordinates for a text annotation
+            fcs_pdf_new_text_rect = self._get_pdfed_rect(*fcs_text_page_top_left, *fcs_text_page_bottom_right)
+            # calculating pdf coordinates for a line annotation
+            fcs_pdf_line_rect = self._get_pdfed_rect(*fcs_page_line_top_left, *fcs_page_line_bottom_right)
+            # adding a line annotation into pdf
+            self._page.add_line_annot((fcs_pdf_line_rect[0], fcs_pdf_line_rect[1]),
+                                      (fcs_pdf_line_rect[2], fcs_pdf_line_rect[3]))
+            # adding a text annotation into pdf
+            self._page.add_freetext_annot(fcs_pdf_new_text_rect, fcs_text, text_color=(255, 0, 0),
+                                          border_color=None, rotate=self._page.rotation, fontsize=4)
+
+        # saving the image for debug purposes
+        self._page_pillow_image.save('images/img_original_marked.png', format='PNG')
+        return
+
     def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
         self._is_link = is_link
 
@@ -416,7 +460,14 @@ class AnnotationMakerNew(AnnotationMaker):
             return False
 
         ocr_success = False
-        self._get_pics_from_page()
-        self._ocr_cropped_image()
+        super()._get_pics_from_page()
+        super()._ocr_cropped_image()
         self._analyze_ocred_data()
+        self._add_fcs_annotations()
+        self._add_stamp()
+
+        self._append_msg_to_log(f'Saving the annotated pdf and closing the document...')
+        self._doc.save(self._pdf_path_annotated)
+        self._clear_error()
+
         return True

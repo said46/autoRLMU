@@ -1,6 +1,6 @@
 import openpyxl as xl
 import os
-from autoRLMU import AnnotationMaker
+from autoRLMU import AnnotationMakerOld
 
 
 os.system("cls")
@@ -27,7 +27,7 @@ try:
 
         # creating object
         pdf_path_annotated: str = f'pdfs/{loop["Doc Number"]}.pdf'
-        loop_drawing = AnnotationMaker(pdf_path_annotated)
+        loop_drawing = AnnotationMakerOld(pdf_path_annotated)
 
         # trying to make a redline
         is_redlined_successfully = loop_drawing.make_redline(loop['Link'], is_link=False)
