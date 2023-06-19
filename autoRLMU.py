@@ -27,7 +27,6 @@ class AnnotationMakerBase:
         self._error_description = ''
         self._ocr_result_data = []
         self._pdf_path: str = ''
-        self._is_link: bool = False
         self._replaced_with = ''
         self._page_pillow_image_cropped: PIL.Image = None
         self._page_pillow_image: PIL.Image = None
@@ -90,31 +89,18 @@ class AnnotationMakerBase:
         print(message)
         self._log.append(message)
 
-    # opens the doc from file path or link, returns False if failed
+    # opens the doc from file path, returns False if failed
     def _open_doc(self) -> bool:
         assert self._pdf_path != '' "pdf path cannot be empty"
-        if self._is_link:
-            # if pdf_path is a link
-            self._append_msg_to_log(f'Loading the file from {self._pdf_path}...')
-            response = requests.get(self._pdf_path)
-            if response.status_code != requests.codes.ok:
-                self._set_error(f'Bad response: {response.status_code}')
-                return False
-            try:
-                self._doc = Document(stream=response.content, filetype="pdf")
-            except Exception as e:
-                self._set_error(f'{self._pdf_path} cannot be open: {str(e)}')
-                return False
-        else:
-            # if _pdf_path is a path, add '_annotated' to the file name
-            self._pdf_path_annotated = self._pdf_path[:-4] + '_annotated' + self._pdf_path[-4:]
-            # open the pdf file
-            self._append_msg_to_log(f'Opening {self._pdf_path}...')
-            try:
-                self._doc = Document(self._pdf_path)
-            except Exception as e:
-                self._set_error(f'{self._pdf_path} cannot be open: {str(e)}')
-                return False
+        # add '_annotated' to the file name
+        self._pdf_path_annotated = self._pdf_path[:-4] + '_annotated' + self._pdf_path[-4:]
+        # open the pdf file
+        self._append_msg_to_log(f'Opening {self._pdf_path}...')
+        try:
+            self._doc = Document(self._pdf_path)
+        except Exception as e:
+            self._set_error(f'{self._pdf_path} cannot be open: {str(e)}')
+            return False
 
         # load the only page
         self._page = self._doc.load_page(0)
@@ -198,7 +184,7 @@ class AnnotationMakerBase:
         return
 
     def _set_pdf_path(self, pdf_path) -> bool:
-        # path or link to a pdf file
+        # path to a pdf file
         if pdf_path in ('', None):
             self._set_error(f'pdf path cannot be empty')
             return False
@@ -344,8 +330,7 @@ class AnnotationMakerOld(AnnotationMakerBase):
                                           border_color=None, rotate=self._page.rotation, fontsize=8)
         return
 
-    def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
-        self._is_link = is_link
+    def make_redline(self, pdf_path: str) -> bool:
         if not self._set_pdf_path(pdf_path):
             return False
         if not self._open_doc():
@@ -410,13 +395,15 @@ class AnnotationMakerNew(AnnotationMakerBase):
             # saving text for later
             text: str = block[1][0]
 
-            if text[:5] in self.FCS_TEXT_TO_FIND:
+            if text[:5] in self.FCS_TEXT_TO_FIND and len(text) > 7:
                 fcs_rect: list[list[float: 2]: 4] = coordinates
                 self._fcs_rects.append(fcs_rect)
                 self._append_msg_to_log(f'{text} was found in {fcs_rect}')
 
                 # forming a full text which replaces the old one
                 # example: FCS0702-01-03 to be replaced with FCS1402-02-03
+                # redesign it with re, there is a lot of such patterns:
+                # FCS07210707 -> FCS14210717 with the current implementation
                 temp_text = self.FCS_TEXT_TO_REPLACE_WITH + text[5:]
                 fcs_node_number = temp_text[8:10]  # with leading zero
                 new_fcs_node_number = "{:02d}".format(int(fcs_node_number) + 1)
@@ -508,9 +495,7 @@ class AnnotationMakerNew(AnnotationMakerBase):
                 self._append_msg_to_log(f'WARNING: failed to add a node number annotation: {str(e)}')
         return
 
-    def make_redline(self, pdf_path: str, is_link: bool = False) -> bool:
-        self._is_link = is_link
-
+    def make_redline(self, pdf_path: str) -> bool:
         if not self._set_pdf_path(pdf_path):
             return False
 

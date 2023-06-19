@@ -30,7 +30,7 @@ try:
         loop_drawing = AnnotationMakerNew(pdf_path_annotated)
 
         # trying to make a redline
-        is_redlined_successfully = loop_drawing.make_redline(loop['Link'], is_link=False)
+        is_redlined_successfully = loop_drawing.make_redline(loop['Link'])
         if is_redlined_successfully:
             loop["Result"] = 'Success'
         else:
