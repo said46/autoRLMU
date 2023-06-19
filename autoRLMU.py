@@ -22,8 +22,8 @@ class AnnotationMakerBase:
     _doc: Document
     _page: Page
 
-    def __init__(self, pdf_path_annotated='pdfs/DEFAULT_annotated.pdf'):
-        self._pdf_path_annotated: str = pdf_path_annotated
+    def __init__(self):
+        self._pdf_path_annotated: str = ''
         self._error_description = ''
         self._ocr_result_data = []
         self._pdf_path: str = ''
@@ -194,8 +194,8 @@ class AnnotationMakerBase:
 
 
 class AnnotationMakerOld(AnnotationMakerBase):
-    def __init__(self, pdf_path_annotated='pdfs/DEFAULT_annotated.pdf'):
-        super().__init__(pdf_path_annotated)
+    def __init__(self):
+        super().__init__()
         self._tries_to_rotate: int = 4
         self._node_number_rects = list()
 
@@ -367,8 +367,8 @@ class AnnotationMakerNew(AnnotationMakerBase):
     CROP_X1 = 1176 * DPI / 72
     CROP_Y1 = 710 * DPI / 72
 
-    def __init__(self, pdf_path_annotated='pdfs/DEFAULT_annotated.pdf'):
-        super().__init__(pdf_path_annotated)
+    def __init__(self):
+        super().__init__()
         self._fcs_new_texts: list[str] = list()
         self._fcs_rects: list[list[list[float: 2]: 4]] = list()
         self._node_rects: list[list[list[float: 2]: 4]] = list()
@@ -483,8 +483,8 @@ class AnnotationMakerNew(AnnotationMakerBase):
                                                              self._node_text_lengths):
             node_page_rect_top_left, node_page_rect_bottom_right = self._get_points_from_cropped(node_rect[0],
                                                                                                  node_rect[2])
-            node_page_line_top_left = (node_page_rect_top_left[0], node_page_rect_top_left[1]+5)
-            node_page_line_bottom_right = node_page_rect_bottom_right
+            node_page_line_top_left = (node_page_rect_top_left[0]-5, node_page_rect_top_left[1])
+            node_page_line_bottom_right = (node_page_rect_bottom_right[0]+5, node_page_rect_bottom_right[1])
             node_pdf_new_text_rect = self._get_pdfed_rect(*node_page_line_top_left, *node_page_line_bottom_right)
             # adding a text annotation into pdf
             try:
