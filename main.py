@@ -30,7 +30,7 @@ try:
         loop_drawing = AnnotationMakerNew()
 
         # trying to make a redline
-        is_redlined_successfully = loop_drawing.make_redline(loop['Link'])
+        is_redlined_successfully = loop_drawing.make_redline(loop['Link'], dpi=300)
         if is_redlined_successfully:
             loop["Result"] = 'Success'
         else:

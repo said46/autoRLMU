@@ -7,19 +7,18 @@ import re
 
 
 class AnnotationMakerBase:
-    _DPI = 150
-    _PDF_ZOOM_FACTOR = 72 / _DPI  # most loop drawings are stored in dpi=150, but showed in dpi=72
-    _CROP_X0 = 989
-    _CROP_Y0 = 62
-    _CROP_X1 = 1152
-    _CROP_Y1 = 624
     _NODE_TEXTS = ('NODE', 'NCDE', 'N0DE')
     _FCS_TEXT_TO_FIND = ('FCS07', 'FCSO7', 'FSC07')
     _FCS_TEXT_TO_REPLACE_WITH = 'FCS14'
-    _doc: Document
-    _page: Page
 
     def __init__(self):
+        self._DPI = 150  # most loop drawings are stored in dpi=150, but showed in dpi=72
+        self._PDF_ZOOM_FACTOR = 72 / self._DPI
+        self._CROP_X0 = 989
+        self._CROP_Y0 = 62
+        self._CROP_X1 = 1152
+        self._CROP_Y1 = 624
+        self._dpi_set = False
         self._pdf_path_annotated: str = ''
         self._error_description: str = ''
         self._ocr_result_data = []
@@ -39,19 +38,21 @@ class AnnotationMakerBase:
         if self._doc is not None:
             self._doc.close()
 
-    @classmethod
-    def _get_points_from_cropped(cls, p1: tuple[float, float], p2: tuple[float, float]):
-        return (p1[0] + cls._CROP_X0, p1[1] + cls._CROP_Y0), (p2[0] + cls._CROP_X0, p2[1] + cls._CROP_Y0)
+    def _get_points_from_cropped(self, p1: tuple[float, float], p2: tuple[float, float]):
+        return (p1[0] + self._CROP_X0, p1[1] + self._CROP_Y0), (p2[0] + self._CROP_X0, p2[1] + self._CROP_Y0)
 
-    @classmethod
-    def _set_dpi(cls, dpi: int) -> None:
+    def _set_dpi(self, dpi: int) -> None:
+        # this method is allowed to be called only once to not mess the crop coordinates
+        if self._dpi_set:
+            raise Exception("DPI has already been set")
         if isinstance(dpi, int) and 72 <= dpi <= 600:
-            cls._DPI = dpi
-            cls._PDF_ZOOM_FACTOR = 72 / cls._DPI
-            cls._CROP_X0 *= cls._DPI / 72
-            cls._CROP_Y0 *= cls._DPI / 72
-            cls._CROP_X1 *= cls._DPI / 72
-            cls._CROP_Y1 *= cls._DPI / 72
+            self._DPI = dpi
+            self._PDF_ZOOM_FACTOR = 72 / self._DPI
+            self._CROP_X0 *= self._DPI / 72
+            self._CROP_Y0 *= self._DPI / 72
+            self._CROP_X1 *= self._DPI / 72
+            self._CROP_Y1 *= self._DPI / 72
+            self._dpi_set = True
         else:
             raise ValueError("DPI should be integer between 72 and 600")
         return
@@ -132,12 +133,13 @@ class AnnotationMakerBase:
         if no_crop:
             self._page_pillow_image_cropped = self._page_pillow_image
             self._CROP_X0, self._CROP_Y0 = 0, 0
-            self._CROP_X1, self._CROP_Y1 = self._page.rect.width, self._page.rect.height
+            self._CROP_X1, self._CROP_Y1 = pix.width, pix.height
         else:
             # cropping the right part of the page image
             self._page_pillow_image_cropped = self._page_pillow_image.crop(
                 (int(self._CROP_X0), int(self._CROP_Y0),
                  int(self._CROP_X1), int(self._CROP_Y1)))
+            self._page_pillow_image_cropped.save(f'images/PIL_img_pre-processed_0_{self._DPI}.png')
 
         # converting the pillow image into nampy array
         self._cropped_page_opencv_image: np.ndarray = np.asarray(self._page_pillow_image_cropped)
@@ -378,14 +380,12 @@ class AnnotationMakerOld(AnnotationMakerBase):
 
 
 class AnnotationMakerNew(AnnotationMakerBase):
-    _DPI = 150  # change zoom_factor if change this!!!
-    _CROP_X0 = 730
-    _CROP_Y0 = 12
-    _CROP_X1 = 1176
-    _CROP_Y1 = 710
-
     def __init__(self):
         super().__init__()
+        self._CROP_X0 = 730
+        self._CROP_Y0 = 12
+        self._CROP_X1 = 1176
+        self._CROP_Y1 = 710
         self._fcs_new_texts: list[str] = list()
         self._fcs_rects: list[list[list[float: 2]: 4]] = list()
         self._node_rects: list[list[list[float: 2]: 4]] = list()
@@ -524,6 +524,7 @@ class AnnotationMakerNew(AnnotationMakerBase):
         ocr_success = self._analyze_ocred_data()
 
         if not ocr_success:
+            self._set_error(f'No FCS text thats suits the template was found')
             return False
 
         self._add_fcs_annotations()
