@@ -6,19 +6,30 @@ import cv2
 import re
 
 
+class NoDPIError(Exception):
+    pass
+
+
+class NoNeedToRedlineError(Exception):
+    pass
+
+
 class AnnotationMakerBase:
     _NODE_TEXTS = ('NODE', 'NCDE', 'N0DE')
     _FCS_TEXT_TO_FIND = ('FCS07', 'FCSO7', 'FSC07')
     _FCS_TEXT_TO_REPLACE_WITH = 'FCS14'
 
     def __init__(self):
-        self._DPI = 150  # most loop drawings are stored in dpi=150, but showed in dpi=72
-        self._PDF_ZOOM_FACTOR = 72 / self._DPI
-        self._CROP_X0 = 989
-        self._CROP_Y0 = 62
-        self._CROP_X1 = 1152
-        self._CROP_Y1 = 624
-        self._dpi_set = False
+        # pix.page.get_pixmap without specifying DPI or matrix returns image with dpi 72
+        # so crop rectangtle coordinates (based on dpi==72) and zoom factor are recaculated every DPI set
+        # default DPI for the class is 150        
+
+        # crop rectangle coordinates for dpi 72 for new loop diagrams by default
+        self._CROP_X0_72 = 730
+        self._CROP_Y0_72 = 12
+        self._CROP_X1_72 = 1176
+        self._CROP_Y1_72 = 710
+        self._is_dpi_set = False
         self._pdf_path_annotated: str = ''
         self._error_description: str = ''
         self._ocr_result_data = []
@@ -39,22 +50,32 @@ class AnnotationMakerBase:
             self._doc.close()
 
     def _get_points_from_cropped(self, p1: tuple[float, float], p2: tuple[float, float]):
+        if not self._is_dpi_set:
+            raise NoDPIError("DPI must be set before working with images")
         return (p1[0] + self._CROP_X0, p1[1] + self._CROP_Y0), (p2[0] + self._CROP_X0, p2[1] + self._CROP_Y0)
 
     def _set_dpi(self, dpi: int) -> None:
-        # this method is allowed to be called only once to not mess the crop coordinates
-        if self._dpi_set:
-            raise Exception("DPI has already been set")
         if isinstance(dpi, int) and 72 <= dpi <= 600:
             self._DPI = dpi
-            self._PDF_ZOOM_FACTOR = 72 / self._DPI
-            self._CROP_X0 *= self._DPI / 72
-            self._CROP_Y0 *= self._DPI / 72
-            self._CROP_X1 *= self._DPI / 72
-            self._CROP_Y1 *= self._DPI / 72
-            self._dpi_set = True
+            self._PDF_ZOOM_FACTOR = self._DPI / 72
+            self._CROP_X0 = self._CROP_X0_72 * self._PDF_ZOOM_FACTOR
+            self._CROP_Y0 = self._CROP_Y0_72 * self._PDF_ZOOM_FACTOR
+            self._CROP_X1 = self._CROP_X1_72 * self._PDF_ZOOM_FACTOR
+            self._CROP_Y1 = self._CROP_Y1_72 * self._PDF_ZOOM_FACTOR
+            self._is_dpi_set = True
         else:
             raise ValueError("DPI should be integer between 72 and 600")
+        return
+
+    def get_crop_rectangle(self) -> list[float: 4]:
+        return [self._CROP_X0_72, self._CROP_Y0_72, self._CROP_X1_72, self._CROP_Y1_72]
+
+    def set_crop_rectangle(self, x0, y0, h, w):
+        self._CROP_X0_72 = x0
+        self._CROP_Y0_72 = y0
+        self._CROP_X1_72 = x0 + w
+        self._CROP_Y1_72 = y0 + h
+        self._is_dpi_set = False
         return
 
     def _get_rect_from_xywh(self, top_left_x: float, top_left_y: float,
@@ -75,10 +96,12 @@ class AnnotationMakerBase:
         return Rect(tl_point, br_point)
 
     def _get_pdfed_rect(self, x0: float, y0: float, x1: float, y1: float) -> Rect:
-        width = (x1 - x0) * self._PDF_ZOOM_FACTOR
-        height = (y1 - y0) * self._PDF_ZOOM_FACTOR
-        x = x0 * self._PDF_ZOOM_FACTOR
-        y = y0 * self._PDF_ZOOM_FACTOR
+        if not self._is_dpi_set:
+            raise NoDPIError("DPI must be set before working with images")
+        width = (x1 - x0) / self._PDF_ZOOM_FACTOR
+        height = (y1 - y0) / self._PDF_ZOOM_FACTOR
+        x = x0 / self._PDF_ZOOM_FACTOR
+        y = y0 / self._PDF_ZOOM_FACTOR
         return self._get_rect_from_xywh(x, y, width, height)
 
     def _set_error(self, error_descr):
@@ -119,6 +142,9 @@ class AnnotationMakerBase:
         return True
 
     def _get_pics_from_page(self, no_crop=False):
+        if not self._is_dpi_set:
+            raise NoDPIError("DPI must be set before working with images")
+
         pix = self._page.get_pixmap(dpi=self._DPI)
 
         # converting page into pillow format
@@ -139,11 +165,9 @@ class AnnotationMakerBase:
             self._page_pillow_image_cropped = self._page_pillow_image.crop(
                 (int(self._CROP_X0), int(self._CROP_Y0),
                  int(self._CROP_X1), int(self._CROP_Y1)))
-            self._page_pillow_image_cropped.save(f'images/PIL_img_pre-processed_0_{self._DPI}.png')
 
         # converting the pillow image into nampy array
         self._cropped_page_opencv_image: np.ndarray = np.asarray(self._page_pillow_image_cropped)
-        cv2.imwrite(f'images/img_pre-processed_0_{self._DPI}.png', self._cropped_page_opencv_image)
 
         # *************** test of image preparation, may worsen the ocr result *******************
         # self._cropped_page_opencv_image = cv2.cvtColor(self._cropped_page_opencv_image, cv2.COLOR_BGR2GRAY)
@@ -214,6 +238,10 @@ class AnnotationMakerBase:
 class AnnotationMakerOld(AnnotationMakerBase):
     def __init__(self):
         super().__init__()
+        self._CROP_X0_72 = 989
+        self._CROP_Y0_72 = 62
+        self._CROP_X1_72 = 1152
+        self._CROP_Y1_72 = 624
         self._tries_to_rotate: int = 4
         self._node_number_rects = list()
 
@@ -382,17 +410,17 @@ class AnnotationMakerOld(AnnotationMakerBase):
 class AnnotationMakerNew(AnnotationMakerBase):
     def __init__(self):
         super().__init__()
-        self._CROP_X0 = 730
-        self._CROP_Y0 = 12
-        self._CROP_X1 = 1176
-        self._CROP_Y1 = 710
+        self._CROP_X0_72 = 730
+        self._CROP_Y0_72 = 12
+        self._CROP_X1_72 = 1176
+        self._CROP_Y1_72 = 710
         self._fcs_new_texts: list[str] = list()
         self._fcs_rects: list[list[list[float: 2]: 4]] = list()
         self._node_rects: list[list[list[float: 2]: 4]] = list()
         self._node_text_lengths: list[int] = list()
         self._new_node_numbers: list[int] = list()
 
-    def _analyze_ocred_data(self) -> bool:
+    def _analyze_ocred_data(self, need_fcs_check=True) -> bool:
         assert self._ocr_result_data is not [], "cannot ocr empty data"
 
         fcs_regex = re.compile(r"^(FCS|FSC)\d\d(\d\d)-?(\d\d)-?(\d\d).*$")
@@ -414,6 +442,9 @@ class AnnotationMakerNew(AnnotationMakerBase):
             text: str = block[1][0]
             # print(f"{text=}")
 
+            if text[:5] == self._FCS_TEXT_TO_REPLACE_WITH and len(self._fcs_rects) == 0:
+                raise NoNeedToRedlineError(f"The loop drawing already contains {self._FCS_TEXT_TO_REPLACE_WITH}, "
+                                           f"no need to redline")
             if text[:5] in self._FCS_TEXT_TO_FIND and len(text) > 7:
                 fcs_rect: list[list[float: 2]: 4] = coordinates
                 matching_result = fcs_regex.match(text)
@@ -449,12 +480,17 @@ class AnnotationMakerNew(AnnotationMakerBase):
 
         self._page_pillow_image_cropped.save('images/img_cropped.png', format='PNG')
 
-        if len(self._fcs_rects) != len(self._node_rects):
-            self._append_msg_to_log(f'WARNING: number of FCS texts found is not equal to numbers of NODE texts with '
-                                    f'digits')
+        if len(self._fcs_rects) > 0:
+            if len(self._fcs_rects) != len(self._node_rects):
+                self._append_msg_to_log(f'WARNING: number of FCS texts found is not equal to numbers of NODE texts '
+                                        f'with digits')
 
-        # if not FCS texts found, return False
-        return len(self._fcs_rects) > 0
+        if need_fcs_check:
+            # if not FCS texts found, return False
+            return len(self._fcs_rects) > 0
+        else:
+            # if no fcs on the drawing, but you still need to redline:
+            return len(self._node_rects) > 0
 
     def _add_fcs_annotations(self) -> None:
         # preparing to draw on the page image for debug purposes
@@ -511,17 +547,22 @@ class AnnotationMakerNew(AnnotationMakerBase):
                 self._append_msg_to_log(f'WARNING: failed to add a node number annotation: {str(e)}')
         return
 
-    def make_redline(self, pdf_path: str, dpi=150, no_crop=False) -> bool:
+    def make_redline(self, pdf_path: str, dpi=150, no_crop=False, need_fcs_check=True) -> bool:
         if not self._set_pdf_path(pdf_path):
             return False
 
         if not self._open_doc():
             return False
 
+        ocr_success = False
         self._set_dpi(dpi)
         super()._get_pics_from_page(no_crop)
         super()._ocr_cropped_image()
-        ocr_success = self._analyze_ocred_data()
+        try:
+            ocr_success = self._analyze_ocred_data(need_fcs_check)
+        except NoNeedToRedlineError as e:
+            self._set_error(str(e))
+            return False
 
         if not ocr_success:
             self._set_error(f'No FCS text thats suits the template was found')
