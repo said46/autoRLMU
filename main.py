@@ -17,7 +17,7 @@ try:
 
         result = sheet.cell(row, 3).value
         if result is not None:
-            if result == "Success" or result[:24] == 'The loop drawing already':
+            if result == "Success" or result[:24] == 'The loop drawing already' or result == "to be annotated manually":
                 continue
 
         # clear result
@@ -29,11 +29,14 @@ try:
 
         # creating object
         pdf_path_annotated: str = f'pdfs/{loop["Doc Number"]}.pdf'
-        loop_drawing = AnnotationMakerNew()
+        loop_drawing = AnnotationMakerOld()
 
         # trying to make a redline, comment the cropping if no need
-        # loop_drawing.set_crop_rectangle(930, 200, 240, 300)
-        is_redlined_successfully = loop_drawing.make_redline(loop['Link'], dpi=300, need_fcs_check=True)
+        # crop for small new:
+        # loop_drawing.set_crop_rectangle_wh(950, 30, 215, 650)
+        # crop for old non-standard:
+        # loop_drawing.set_crop_rectangle_wh(?)
+        is_redlined_successfully = loop_drawing.make_redline(loop['Link'], dpi=300)
         if is_redlined_successfully:
             loop["Result"] = 'Success'
         else:
