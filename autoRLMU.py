@@ -149,7 +149,7 @@ class AnnotationMakerBase:
         self._clear_error()
         return True
 
-    def _get_pics_from_page(self, no_crop=False):
+    def _get_pics_from_page(self, no_need_to_crop=False):
         if not self._is_dpi_set:
             raise NoDPIError("DPI must be set before working with images")
 
@@ -164,7 +164,7 @@ class AnnotationMakerBase:
         # will be used to find empty space on the page
         self._page_opencv_image: np.ndarray = np.asarray(self._page_pillow_image)
 
-        if no_crop:
+        if no_need_to_crop:
             self._page_pillow_image_cropped = self._page_pillow_image
             self._CROP_X0, self._CROP_Y0 = 0, 0
             self._CROP_X1, self._CROP_Y1 = pix.width, pix.height
@@ -391,7 +391,7 @@ class AnnotationMakerOld(AnnotationMakerBase):
         self._page_pillow_image.save('images/img_original_marked.png', format='PNG')
         return
 
-    def make_redline(self, pdf_path: str, dpi=150, no_crop=False, tries_to_rotate=3) -> bool:
+    def make_redline(self, pdf_path: str, dpi=150, no_need_to_crop=False, tries_to_rotate=3) -> bool:
         assert 0 <= tries_to_rotate < 4, "tries_to_rotate must be 0, 1, 2, or 3"
 
         if not self._set_pdf_path(pdf_path):
@@ -403,7 +403,7 @@ class AnnotationMakerOld(AnnotationMakerBase):
         ocr_success = False
         self._tries_to_ocr = tries_to_rotate + 1
         while self._tries_to_ocr > 0:
-            self._get_pics_from_page(no_crop)
+            self._get_pics_from_page(no_need_to_crop)
             self._ocr_cropped_image()
             ocr_success = self._analyze_ocred_data()
 
@@ -566,7 +566,7 @@ class AnnotationMakerNew(AnnotationMakerBase):
                 self._append_msg_to_log(f'WARNING: failed to add a node number annotation: {str(e)}')
         return
 
-    def make_redline(self, pdf_path: str, dpi=150, no_crop=False, need_fcs_check=True) -> bool:
+    def make_redline(self, pdf_path: str, dpi=150, no_need_to_crop=False, need_fcs_check=True) -> bool:
         if not self._set_pdf_path(pdf_path):
             return False
 
@@ -575,7 +575,7 @@ class AnnotationMakerNew(AnnotationMakerBase):
 
         ocr_success = False
         self._set_dpi(dpi)
-        super()._get_pics_from_page(no_crop)
+        super()._get_pics_from_page(no_need_to_crop)
         super()._ocr_cropped_image()
         try:
             ocr_success = self._analyze_ocred_data(need_fcs_check)
