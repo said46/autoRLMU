@@ -15,10 +15,8 @@ try:
         if sheet.cell(row, 1).value is None:
             break
 
-        result = sheet.cell(row, 3).value
-        if result is not None:
-            if result == "Success" or result[:24] == 'The loop drawing already' or result == "to be annotated manually":
-                continue
+        if sheet.cell(row, 3).value not in (None, ""):
+            continue
 
         # clear result
         sheet.cell(row, 4).value = ''
@@ -32,10 +30,11 @@ try:
         loop_drawing = AnnotationMakerOld()
 
         # trying to make a redline, comment the cropping if no need
+        # standard crop new for: x0=730 y0=12 w=446 h=698
         # crop for small new:
         # loop_drawing.set_crop_rectangle_wh(950, 30, 215, 650)
-        # crop for old non-standard:
-        # loop_drawing.set_crop_rectangle_wh(?)
+        # standard crop for old: x0=989 y0=62 w=163 h=562
+        # loop_drawing.set_crop_rectangle_wh(898, 30, 215, 650)
         is_redlined_successfully = loop_drawing.make_redline(loop['Link'], dpi=300)
         if is_redlined_successfully:
             loop["Result"] = 'Success'

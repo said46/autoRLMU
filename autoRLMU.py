@@ -149,6 +149,36 @@ class AnnotationMakerBase:
         self._clear_error()
         return True
 
+    # to prevent bad things happening like a stamp outside of pages
+    def _wrap_page_content(self) -> None:
+        if self._page.is_wrapped:
+            self._page.wrap_contents()
+        return
+
+    def _rebuild_page_content(self) -> None:
+        assert 1 == 0, 'not implemented yet'
+        # another and probably a better way of preventing bad things happening, but requires a new document:
+        # https://github.com/pymupdf/PyMuPDF/discussions/2494
+        #
+        # doc = fitz.open()  # new output file
+        # src = fitz.open("2.pdf")  # source file
+        # imgfile = "nur-ruhig.png"
+        # for src_page in src:  # iterate over input pages
+        #     src_rect = src_page.rect  # source page rect
+        #     w, h = src_rect.br  # save its width, height
+        #     src_rot = src_page.rotation  # save source rotation
+        #     src_page.set_rotation(0)  # set rotation to 0 temporarily
+        #     page = doc.new_page(width=w, height=h)  # make output page
+        #     page.show_pdf_page(  # insert source page
+        #         page.rect,
+        #         src,
+        #         src_page.number,
+        #         rotate=-src_rot,  # use reversed original rotation
+        #     )
+        #     page.insert_image((0, 0, 400, 200), filename=imgfile)
+        #
+        # doc.ez_save("output.pdf")
+
     def _get_pics_from_page(self, no_need_to_crop=False):
         if not self._is_dpi_set:
             raise NoDPIError("DPI must be set before working with images")
@@ -274,6 +304,7 @@ class AnnotationMakerOld(AnnotationMakerBase):
             coordinates: list[list[float: 2]: 4] = block[0]
             # saving text for later
             text: str = block[1][0]
+            # print(f"{text=}")
 
             # checking first five symbols for the desired text ('FCS07' in our case)
             if text[:5] in self._FCS_TEXT_TO_FIND:
@@ -320,18 +351,18 @@ class AnnotationMakerOld(AnnotationMakerBase):
         if not node_text_rect:
             self._append_msg_to_log(f'NODE was NOT found')
 
+        self._page_pillow_image_cropped.save('images/img_cropped.png', format='PNG')
+
         # if the FCS text was not found, rotate the page and decrement the number of tries left
         if not fcs_rect:
             self._append_msg_to_log(f'{self._FCS_TEXT_TO_FIND} was NOT found')
             self._page.set_rotation(self._page.rotation + 90)
             self._tries_to_ocr -= 1
-            self._append_msg_to_log(f'Rotating the page, {self._tries_to_ocr - 1} tries left...')
+            self._append_msg_to_log(f'Rotating the page, {self._tries_to_ocr} tries left...')
             # if no tries left - quit the script
             if self._tries_to_ocr == 0:
                 self._set_error(f'No tries left, check the document')
                 return False
-
-        self._page_pillow_image_cropped.save('images/img_cropped.png', format='PNG')
 
         self._clear_error()
         return True
@@ -409,7 +440,7 @@ class AnnotationMakerOld(AnnotationMakerBase):
 
         if not ocr_success:
             return False
-
+        self._wrap_page_content()
         self._add_fcs_annotations()
         self._add_node_annotations()
         self._add_stamp()
@@ -587,6 +618,7 @@ class AnnotationMakerNew(AnnotationMakerBase):
             self._set_error(f'No FCS text thats suits the template was found')
             return False
 
+        self._wrap_page_content()
         self._add_fcs_annotations()
         self._add_node_annotations()
         self._add_stamp()
